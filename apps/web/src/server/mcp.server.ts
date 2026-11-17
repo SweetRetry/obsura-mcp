@@ -1,4 +1,11 @@
-import { ASPECT_RATIOS, controlsOf, models, type MediaModel } from "@workspace/model-providers"
+import {
+  ASPECT_RATIOS,
+  controlsOf,
+  models,
+  type MediaModel,
+  type Pricing,
+  type Quote,
+} from "@workspace/model-providers"
 import {
   type ClientCapabilities,
   inputRequired,
@@ -8,7 +15,6 @@ import {
 import env from "@env"
 import { z } from "zod"
 
-import type { Quote } from "./generation/pricing"
 import { previewOf } from "./generation/preview.server"
 import { storedOf } from "./generation/runs.server"
 import {
@@ -86,15 +92,19 @@ function confirmation({ model, runs, quote }: { model: MediaModel; runs: number;
 
 const params = z
   .object({
-    aspectRatio: z.enum(ASPECT_RATIOS),
+    aspectRatio: z.enum([...ASPECT_RATIOS, "adaptive"]),
     resolution: z.string(),
     quality: z.string(),
     complexity: z.string(),
     count: z.number(),
     duration: z.number(),
     audio: z.boolean(),
+    lastFrame: z.boolean(),
     watermark: z.boolean(),
     sequential: z.boolean(),
+    transparent: z.boolean(),
+    layers: z.number(),
+    textRecognition: z.boolean(),
   })
   .partial()
   .describe("Controls the model offers; list_models shows each model's options and defaults.")
@@ -104,6 +114,12 @@ const reference = z.object({
   role: z.enum(["reference", "first-frame", "last-frame", "mask"]).default("reference"),
   mime: z.string().describe("e.g. image/png, image/jpeg, video/mp4"),
 })
+
+/** A price as JSON: the rates and what they bill, without a token model's estimator. */
+function priceView(price: Pricing) {
+  const { per, rates, videoIn, referenceImage } = price
+  return { per, rates, videoIn, referenceImage }
+}
 
 /** Where a model's guide is read as an MCP resource. */
 const guideUri = (model: MediaModel) => `obscura://guides/${model.id}`
@@ -141,10 +157,7 @@ export function mcpServer(caller: Caller) {
           maxReferences: model.maxReferences,
           outputsPerRun: model.outputsPerRun,
           guide: model.guide && guideUri(model),
-          price:
-            model.price && "tokensOf" in model.price
-              ? { currency: "USD", perMillionOutputTokens: model.price.perMillion }
-              : model.price,
+          price: model.price && priceView(model.price),
         }))
       return { content: [{ type: "text", text: JSON.stringify(list, null, 2) }] }
     }
@@ -195,9 +208,14 @@ export function mcpServer(caller: Caller) {
       ].join(" "),
       inputSchema: z.object({
         model: z.string().describe("A model id or name from list_models."),
-        prompt: z.string().min(1),
+        prompt: z
+          .string()
+          .default("")
+          .describe(
+            "Required, except by a model whose mode runs without one (layer decomposition)."
+          ),
         params: params.optional(),
-        references: z.array(reference).max(16).optional(),
+        references: z.array(reference).max(50).optional(),
         runs: z.number().int().min(1).max(4).default(1),
         client_key: z.string().max(200).optional(),
         wait_seconds: z

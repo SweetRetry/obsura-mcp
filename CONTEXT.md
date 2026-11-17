@@ -8,4 +8,5 @@
 - **Lost run.** A run whose outcome is unknown (timeout, 5xx, worker died). The provider may have billed it; the audit counts it as possibly billed.
 - **Confirming.** A task with a lost run whose provider task may still deliver; it keeps polling for 24 hours.
 - **Admin.** An account signed in with a Google address listed in `ADMIN_EMAILS`. Each admin has its own tasks, costs and MCP clients; the Models switches are shared. MCP clients act for an admin after it consents.
+- **Mode.** One way of calling a provider model that takes its own inputs, controls or price, listed as its own catalog entry with its own id (Seedream 5.5 Layers, Seedance 2.5 Edit). Its controls keep the shared param keys. _Avoid_: variant.
 - **Off.** A model or provider the admin switched off on the Models page. `list_models` hides it and `generate` refuses it; tasks already running finish. A model whose provider is off is off. _Avoid_: disabled (that is a revoked OAuth client).

@@ -101,7 +101,7 @@ describe("one product input, each provider's spelling", () => {
     })
   })
 
-  it("sends Seedance the ratio it defaults to, 16:9", () => {
+  it("sends Seedance the ratio it defaults to, adaptive, which follows a first frame's shape", () => {
     const frame = { role: "first-frame", url: "https://r/f.png", mime: "image/png" } as const
     expect(callFor(model("Seedance 2.0 Fast"), { prompt: "a cat", references: [frame] })).toEqual({
       method: "POST",
@@ -114,7 +114,7 @@ describe("one product input, each provider's spelling", () => {
             { type: "text", text: "a cat" },
             { type: "image_url", image_url: { url: "https://r/f.png" }, role: "first_frame" },
           ],
-          ratio: "16:9",
+          ratio: "adaptive",
           resolution: "720p",
           duration: 5,
           seed: -1,
@@ -401,5 +401,121 @@ describe("Suno through Tu-zi", () => {
         data: [{ task_id: "task_abc", status: "SUCCESS", fail_reason: "", data: [{}] }],
       })
     ).toEqual({ state: "failed", reason: "Finished without audio" })
+  })
+})
+
+describe("one model, several ways to call it", () => {
+  const photo = { role: "reference", url: "https://r/p.png", mime: "image/png" } as const
+  const clip = { role: "reference", url: "https://r/c.mp4", mime: "video/mp4" } as const
+
+  it("sends a decomposition to the model it is a mode of, at a size tier, without a prompt", () => {
+    expect(
+      callFor(model("Seedream 5.5 Layers"), {
+        prompt: "",
+        references: [photo],
+        params: { layers: 12, textRecognition: true },
+      })
+    ).toEqual({
+      method: "POST",
+      path: "/images/generations",
+      body: {
+        kind: "json",
+        value: {
+          model: "doubao-seedream-5-5-261028",
+          size: "2K",
+          image: "https://r/p.png",
+          layer_decomposition: true,
+          layer_decomposition_options: { max_images: 12, text_recognition: true },
+          watermark: false,
+          response_format: "url",
+        },
+      },
+    })
+  })
+
+  it("refuses a mode without the input it works on", () => {
+    expect(issuesOf(model("Seedream 5.5 Layers"), { prompt: "" })).toEqual([
+      { path: "references", message: "Seedream 5.5 Layers needs a reference to work on" },
+    ])
+    expect(issuesOf(model("Seedream 5.5"), { prompt: "" })).toEqual([
+      { path: "prompt", message: "is empty" },
+    ])
+    expect(
+      issuesOf(model("Seedance 2.5 Edit"), { prompt: "make it night", references: [photo] })
+    ).toEqual([
+      { path: "references.0", message: "Seedance 2.5 Edit does not support reference-to-video" },
+    ])
+  })
+
+  it("sends an edit as Ark's edit task, in the input's shape and length", () => {
+    expect(
+      callFor(model("Seedance 2.5 Edit"), { prompt: "make it night", references: [clip] })
+    ).toEqual({
+      method: "POST",
+      path: "/contents/generations/tasks",
+      body: {
+        kind: "json",
+        value: {
+          model: "doubao-seedance-2-5-260628",
+          content: [
+            { type: "text", text: "make it night" },
+            { type: "video_url", video_url: { url: "https://r/c.mp4" }, role: "reference_video" },
+          ],
+          omni_reference_task_type: "edit",
+          ratio: "adaptive",
+          resolution: "720p",
+          duration: -1,
+          seed: -1,
+          generate_audio: true,
+          watermark: false,
+        },
+      },
+    })
+  })
+
+  it("reads each layer's place on the source and its text", () => {
+    const layer = {
+      url: "https://ark/l1.png",
+      size: "400x120",
+      z_index: 2,
+      bounding_box: { absolute: [10, 20, 410, 140], normalized: [1, 2, 3, 4] },
+      text_recognition: { text: "SALE", lines: [] },
+    }
+    const base = { url: "https://ark/base.png", size: "2048x2048" }
+    expect(apiOf(model("Seedream 5.5 Layers")).read({ data: [base, layer] })).toEqual({
+      state: "done",
+      result: {
+        type: "image",
+        results: [
+          { asset: { kind: "url", url: "https://ark/base.png" }, width: 2048, height: 2048 },
+          {
+            asset: { kind: "url", url: "https://ark/l1.png" },
+            width: 400,
+            height: 120,
+            layer: { z: 2, box: [10, 20, 410, 140], text: "SALE" },
+          },
+        ],
+      },
+    })
+  })
+
+  it("returns the last frame as a second output when asked", () => {
+    const done = {
+      id: "t1",
+      status: "succeeded",
+      content: { video_url: "https://ark/v.mp4", last_frame_url: "https://ark/last.jpg" },
+      usage: { completion_tokens: 100 },
+    }
+    expect(apiOf(model("Seedance 2.5")).poll!.read(done)).toEqual({
+      state: "done",
+      result: {
+        type: "video",
+        results: [
+          { asset: { kind: "url", url: "https://ark/v.mp4" } },
+          { asset: { kind: "url", url: "https://ark/last.jpg" } },
+        ],
+        usage: { tokens: 100 },
+      },
+    })
   })
 })

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { apiModelOf } from "../../lib/model"
 
 import type { Outcome } from "../../lib/result"
 import { type Adapter, json, unreadable } from "../api"
@@ -22,7 +23,7 @@ export const minimaxVideo: Adapter = {
       method: "POST",
       path: "/v2/video_generation",
       body: json({
-        model: model.id,
+        model: apiModelOf(model),
         content: [{ type: "text", text: prompt }, ...references.map(contentOf)],
         ...(params.aspectRatio && { ratio: params.aspectRatio }),
         ...(params.resolution && { resolution: params.resolution.toUpperCase() }),

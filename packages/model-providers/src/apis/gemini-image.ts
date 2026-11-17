@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { apiModelOf } from "../lib/model"
 
 import { type Adapter, json, unreadable } from "./api"
 
@@ -27,7 +28,7 @@ export const geminiImage: Adapter = {
   submit(model, { prompt, references, params }) {
     return {
       method: "POST",
-      path: `/v1beta/models/${model.id}:generateContent`,
+      path: `/v1beta/models/${apiModelOf(model)}:generateContent`,
       body: json({
         contents: [
           {

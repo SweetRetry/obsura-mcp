@@ -1,6 +1,6 @@
 import type { MediaModel } from "../lib/model"
-import { ASPECT_RATIOS, type ParamSpec, type Quality } from "../lib/params"
-import type { OutputTokenPrice, Price } from "../lib/price"
+import { ASPECT_RATIOS, type ParamSpec, type Quality, ratioOf } from "../lib/params"
+import type { Pricing, Rate } from "../lib/price"
 import { outputTokens } from "../lib/gpt-image"
 import type { Provider } from "../lib/provider"
 import midjourneyGuide from "../guides/midjourney.md?raw"
@@ -14,7 +14,7 @@ export const tuzi: Provider = {
   // Docs: https://tuzi-api.apifox.cn/
 }
 
-/** Any `WxH` whose sides divide by 16, so every ratio is offered. Quality sets the price, so it is the variant. */
+/** Any `WxH` whose sides divide by 16, so every ratio is offered. */
 function gptImageParams(quality: readonly Quality[]): ParamSpec {
   return {
     aspectRatio: { options: ASPECT_RATIOS, default: "16:9" },
@@ -23,23 +23,23 @@ function gptImageParams(quality: readonly Quality[]): ParamSpec {
   }
 }
 
-const usd = (amount: number): Price => ({ amount, currency: "USD", per: "output" })
+const usd = (amount: number): Rate => ({ amount, currency: "USD" })
 
-/** Billed per output token at $30 per million. The token count depends on size and quality, so the price is set per run. */
-const gptImageOutputPrice = (model: "gpt-image-2.5" | "gpt-image-2.6"): OutputTokenPrice => ({
-  currency: "USD",
-  perMillion: 30,
-  tokensOf: ({ aspectRatio, quality }) =>
-    aspectRatio && quality ? outputTokens(model, aspectRatio, quality) : null,
+/** Billed per output token at $30 per million. The token count depends on size and quality. */
+const gptImageOutputPrice = (model: "gpt-image-2.5" | "gpt-image-2.6"): Pricing => ({
+  per: "million-tokens",
+  rates: usd(30),
+  tokensOf: ({ aspectRatio, quality }) => {
+    const ratio = ratioOf(aspectRatio)
+    return ratio && quality ? outputTokens(model, ratio, quality) : null
+  },
 })
 
 /** Tu-zi models carry the upstream vendor's list price. */
-const gptImage2Price = {
-  byVariant: { low: usd(0.006), medium: usd(0.053), high: usd(0.211) },
+const gptImage2Price: Pricing = {
+  per: "output",
+  rates: { by: "quality", rates: { low: usd(0.006), medium: usd(0.053), high: usd(0.211) } },
 }
-
-/** MiniMax-H3 bills per second of output, at the chosen resolution. */
-const perSecond = (amount: number): Price => ({ amount, currency: "USD", per: "second" })
 
 export const tuziModels: MediaModel[] = [
   {
@@ -50,7 +50,6 @@ export const tuziModels: MediaModel[] = [
     api: "openai-images",
     capabilities: ["text-to-image", "image-edit", "multi-reference", "mask-edit"],
     params: gptImageParams(["low", "medium", "high"]),
-    variant: "quality",
     price: gptImage2Price,
     // Docs: https://api.tu-zi.com/en/docs/providers/openai/image
     // Price: OpenAI's per-image list price at 1024x1024, the dearest of its listed sizes, read 2026-11-02
@@ -64,7 +63,6 @@ export const tuziModels: MediaModel[] = [
     api: "openai-images",
     capabilities: ["text-to-image", "image-edit", "multi-reference", "mask-edit"],
     params: gptImageParams(["low", "medium", "high", "xhigh", "max"]),
-    variant: "quality",
     price: gptImageOutputPrice("gpt-image-2.5"),
     // Docs: https://api.tu-zi.com/en/docs/providers/openai/image
     // Tu-zi's image page lists only `gpt-image-2`; this id runs ahead of it. Price follows OpenAI's
@@ -78,7 +76,6 @@ export const tuziModels: MediaModel[] = [
     api: "openai-images",
     capabilities: ["text-to-image", "image-edit", "multi-reference", "mask-edit"],
     params: gptImageParams(["low", "medium", "high", "xhigh", "max"]),
-    variant: "quality",
     price: gptImageOutputPrice("gpt-image-2.5"),
     // Docs: https://api.tu-zi.com/en/docs/providers/openai/image
     // Same as Flare. Sunburst is the editing-precision snapshot.
@@ -94,7 +91,6 @@ export const tuziModels: MediaModel[] = [
       ...gptImageParams(["low", "medium", "high", "xhigh", "max"]),
       complexity: { options: ["low", "medium", "high"], default: "high" },
     },
-    variant: "quality",
     price: gptImageOutputPrice("gpt-image-2.6"),
     // Docs: https://api.tu-zi.com/en/docs/providers/openai/image
     // Tu-zi's usage is marked `estimated` and differs from OpenAI's calculator, so the upstream bill may
@@ -112,7 +108,6 @@ export const tuziModels: MediaModel[] = [
       ...gptImageParams(["low", "medium", "high", "xhigh", "max"]),
       complexity: { options: ["low", "medium", "high"], default: "high" },
     },
-    variant: "quality",
     price: gptImageOutputPrice("gpt-image-2.6"),
     // Docs: https://api.tu-zi.com/en/docs/providers/openai/image
     // Same as Flare. Sunburst is the detailed-work snapshot.
@@ -131,8 +126,13 @@ export const tuziModels: MediaModel[] = [
       },
       resolution: { options: ["1K", "2K", "4K"], default: "1K" },
     },
-    variant: "resolution",
-    price: { byVariant: { "1K": usd(0.0336), "2K": usd(0.0504), "4K": usd(0.113) } },
+    price: {
+      per: "output",
+      rates: {
+        by: "resolution",
+        rates: { "1K": usd(0.0336), "2K": usd(0.0504), "4K": usd(0.113) },
+      },
+    },
     // Docs: https://api.tu-zi.com/en/docs/providers/google-gemini/image
     // Price: Google's Standard-tier per-image rate, read 2026-11-02 (https://ai.google.dev/gemini-api/docs/pricing).
     // Input tokens are not counted. Tu-zi's docs do not list this id, but the id is Google's own.
@@ -147,7 +147,7 @@ export const tuziModels: MediaModel[] = [
     params: {},
     outputsPerRun: 4,
     guide: midjourneyGuide,
-    price: { amount: 0.15, currency: "CNY", per: "output" },
+    price: { per: "call", rates: { amount: 0.15, currency: "CNY" } },
     // Docs: https://api.tu-zi.com/en/docs/api/midjourney
     // No controls: flags go in the prompt, and `guides/midjourney.md` is their reference. One run delivers four images.
     // Midjourney publishes no API price, so the price is the user's rule: 0.15 CNY per task.
@@ -164,8 +164,11 @@ export const tuziModels: MediaModel[] = [
       resolution: { options: ["768p", "2K"], default: "768p" },
       duration: { min: 4, max: 15, step: 1, default: 5 },
     },
-    variant: "resolution",
-    price: { byVariant: { "768p": perSecond(0.08), "2K": perSecond(0.13) } },
+    // MiniMax bills per second of output, at the chosen resolution.
+    price: {
+      per: "second",
+      rates: { by: "resolution", rates: { "768p": usd(0.08), "2K": usd(0.13) } },
+    },
     framesAlone: true,
     // Docs: https://api.tu-zi.com/en/docs/providers/minimax/video
     // Price: MiniMax's official per-second rate, read 2026-11-05 (https://platform.minimax.io/docs/pricing/overview).

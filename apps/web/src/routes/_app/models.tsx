@@ -4,9 +4,12 @@ import {
   type MediaModel,
   models,
   defaultsOf,
-  type Price,
+  outputsOf,
   type Provider,
   providers,
+  quoteOf,
+  type Rate,
+  type Rates,
 } from "@workspace/model-providers"
 import { Switch } from "@workspace/ui/components/switch"
 import {
@@ -26,7 +29,6 @@ import { toast } from "sonner"
 import { CopyButton } from "@/components/app/copy-button"
 import { PageHeader } from "@/components/app/page-header"
 import { modelsPage, switchEntry } from "@/server/admin.functions"
-import { quoteOf } from "@/server/generation/pricing"
 
 export const Route = createFileRoute("/_app/models")({
   loader: () => modelsPage(),
@@ -188,11 +190,13 @@ function ProviderRows({
  */
 function priceLine(model: MediaModel) {
   const defaults = defaultsOf(model.params)
-  const key = model.variant ?? (model.modality === "video" ? "resolution" : "quality")
+  const rates = model.price?.rates
+  const key =
+    (rates && "by" in rates && rates.by) || (model.modality === "video" ? "resolution" : "quality")
   const spec = model.params[key]
   const values: (string | undefined)[] = spec && "options" in spec ? [...spec.options] : [undefined]
-  // Per second for video; per delivered file otherwise (a Midjourney run is four images).
-  const per = model.modality === "video" ? defaults.duration : (model.outputsPerRun ?? 1)
+  // Per second for video; per delivered file otherwise.
+  const per = model.modality === "video" ? defaults.duration : outputsOf(model, defaults)
   const usd = values
     .flatMap((value) => {
       const run = quoteOf(model, { ...defaults, ...(value && { [key]: value }) }, 1).usd
@@ -235,7 +239,8 @@ const CAPABILITIES: Record<string, string> = {
   "sequential-images": "Image series",
   "first-frame": "First frame",
   "first-last-frame": "First and last frame",
-  "reference-to-video": "Reference images",
+  "reference-to-video": "Reference media",
+  "layer-decomposition": "Splits into layers",
   "video-edit": "Edits a video",
   "video-extend": "Extends a video",
   "web-search": "Web search",
@@ -298,21 +303,46 @@ function Details({ model }: { model: MediaModel }) {
   )
 }
 
+const UNITS = {
+  output: "output",
+  call: "task",
+  second: "second",
+  "million-tokens": "1M tokens",
+} as const
+
 /** The provider's price as published, in its own currency: what the USD figure was converted from. */
 function ListPrice({ model }: { model: MediaModel }) {
   const price = model.price
   if (!price) return <p className="text-muted-foreground">No published price</p>
-  if ("tokensOf" in price) return <p>${price.perMillion} per 1M output tokens</p>
-  const one = (p: Price) => `${p.currency === "CNY" ? "¥" : "$"}${p.amount} per ${p.per}`
-  if (!("byVariant" in price)) return <p>{one(price)}</p>
+  const one = (rate: Rate) =>
+    `${rate.currency === "CNY" ? "¥" : "$"}${rate.amount} per ${UNITS[price.per]}`
+  const table = (rates: Rates, note?: string) =>
+    "by" in rates ? (
+      Object.entries(rates.rates).map(([value, rate]) => (
+        <Fragment key={`${note}${value}`}>
+          <dt>{note ? `${value}, ${note}` : value}</dt>
+          <dd className="tabular-nums">{one(rate)}</dd>
+        </Fragment>
+      ))
+    ) : (
+      <Fragment key={note ?? "all"}>
+        <dt>{note ?? "Any"}</dt>
+        <dd className="tabular-nums">{one(rates)}</dd>
+      </Fragment>
+    )
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-      {Object.entries(price.byVariant).map(([variant, p]) => (
-        <Fragment key={variant}>
-          <dt>{variant}</dt>
-          <dd className="tabular-nums">{one(p)}</dd>
-        </Fragment>
-      ))}
+      {table(price.rates)}
+      {price.videoIn && table(price.videoIn, "video in")}
+      {price.referenceImage && (
+        <>
+          <dt>Reference image</dt>
+          <dd className="tabular-nums">
+            {price.referenceImage.currency === "CNY" ? "¥" : "$"}
+            {price.referenceImage.amount} each
+          </dd>
+        </>
+      )}
     </dl>
   )
 }

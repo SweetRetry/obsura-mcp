@@ -1,4 +1,4 @@
-import type { Capability, MediaModel } from "./model"
+import { type Capability, hasCapability, type MediaModality, type MediaModel } from "./model"
 import { defaultsOf, type ParamKey, type Params } from "./params"
 
 /** `reference` guides any number of images; frame roles pin a video's ends; `mask` marks what an edit may change. */
@@ -7,11 +7,10 @@ export type ReferenceRole = "reference" | "first-frame" | "last-frame" | "mask"
 /** Media a request carries. The provider must be able to fetch the URL, so the server signs it first. */
 export type Reference = { role: ReferenceRole; url: string; mime: string }
 
-type Media = "image" | "video" | "audio"
-const MEDIA = new Set<string>(["image", "video", "audio"])
+const MEDIA = new Set<string>(["image", "video", "audio"] satisfies MediaModality[])
 
 /** `image/png` is an image. `resolveInput` refuses any other kind, so past it every reference has one. */
-export const mediaOf = (reference: Reference): Media => reference.mime.split("/")[0] as Media
+export const mediaOf = (reference: Reference) => reference.mime.split("/")[0] as MediaModality
 
 /** A generation request in the product's vocabulary, shared by every model. */
 export type GenerationInput = {
@@ -31,17 +30,17 @@ export type Issue = { path: string; message: string }
 
 export type Checked<T> = { ok: true; value: T } | { ok: false; issues: Issue[] }
 
-/** Capabilities that let a model take a reference in this role. One image guide is an edit; more than one needs multi-reference. */
+/** Capabilities that let a model take a reference in this role. One image guide is an edit or a layer source; more than one needs multi-reference. */
 function capabilitiesFor(model: MediaModel, reference: Reference, guides: number): Capability[] {
   if (reference.role === "mask") return ["mask-edit"]
   if (reference.role === "first-frame") return ["first-frame"]
   if (reference.role === "last-frame") return ["first-last-frame"]
   if (model.modality === "video") {
     return mediaOf(reference) === "video"
-      ? ["video-edit", "reference-to-video"]
+      ? ["reference-to-video", "video-edit", "video-extend"]
       : ["reference-to-video"]
   }
-  return guides > 1 ? ["multi-reference"] : ["image-edit", "multi-reference"]
+  return guides > 1 ? ["multi-reference"] : ["image-edit", "multi-reference", "layer-decomposition"]
 }
 
 function checkParam(model: MediaModel, key: ParamKey, value: unknown): string | null {
@@ -64,7 +63,8 @@ function checkParam(model: MediaModel, key: ParamKey, value: unknown): string | 
 export function resolveInput(model: MediaModel, input: GenerationInput): Checked<ResolvedInput> {
   const issues: Issue[] = []
   const prompt = input.prompt.trim()
-  if (!prompt) issues.push({ path: "prompt", message: "is empty" })
+  // A decomposition without a prompt splits out every main element.
+  if (!prompt && model.mode !== "layers") issues.push({ path: "prompt", message: "is empty" })
 
   const given = input.params ?? {}
   for (const key of Object.keys(given) as ParamKey[]) {
@@ -88,13 +88,16 @@ export function resolveInput(model: MediaModel, input: GenerationInput): Checked
       issues.push({ path, message: `${model.name} takes only image references` })
     }
     const needs = capabilitiesFor(model, reference, guides)
-    if (!needs.some((capability) => model.capabilities.includes(capability))) {
+    if (!needs.some((capability) => hasCapability(model, capability))) {
       issues.push({ path, message: `${model.name} does not support ${needs.join(" or ")}` })
     }
   })
   const has = (role: Reference["role"]) => references.some((reference) => reference.role === role)
   if (has("last-frame") && !has("first-frame")) {
     issues.push({ path: "references", message: "a last frame needs a first frame" })
+  }
+  if (model.mode && !references.length) {
+    issues.push({ path: "references", message: `${model.name} needs a reference to work on` })
   }
   if (model.framesAlone && (has("first-frame") || has("last-frame")) && has("reference")) {
     issues.push({

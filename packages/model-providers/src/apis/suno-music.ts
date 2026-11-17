@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { apiModelOf } from "../lib/model"
 
 import type { Outcome } from "../lib/result"
 import { type Adapter, json, unreadable } from "./api"
@@ -30,7 +31,7 @@ export const sunoMusic: Adapter = {
     return {
       method: "POST",
       path: "/suno/submit/music",
-      body: json({ prompt, mv: model.id }),
+      body: json({ prompt, mv: apiModelOf(model) }),
     }
   },
   read(body) {

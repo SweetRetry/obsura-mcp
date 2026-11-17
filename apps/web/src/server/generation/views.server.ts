@@ -22,6 +22,7 @@ export function taskView(task: TaskRow, origin: string) {
     width: file.width,
     height: file.height,
     durationMs: file.durationMs,
+    layer: file.layer,
   }))
   return {
     id: task.id,

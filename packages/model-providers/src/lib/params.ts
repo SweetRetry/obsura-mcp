@@ -16,6 +16,17 @@ export const ASPECT_RATIOS = [
 
 export type AspectRatio = (typeof ASPECT_RATIOS)[number]
 
+/**
+ * `adaptive` takes the shape of the input (a first frame, a video to extend), or lets the model pick.
+ * Only video offers it: Seedance bills by pixels, and the quote already counts the most a resolution
+ * has, so the shape need not be known ahead.
+ */
+export type Shape = AspectRatio | "adaptive"
+
+/** The ratio a shape names, for code that sizes an image. No image model offers `adaptive`, so it reads as unset. */
+export const ratioOf = (shape: Shape | undefined): AspectRatio | undefined =>
+  shape === "adaptive" ? undefined : shape
+
 /** Image resolutions name a square's side in K. Video names its short edge. */
 export type Resolution = "1K" | "1.5K" | "2K" | "3K" | "4K" | "480p" | "720p" | "768p" | "1080p"
 
@@ -26,7 +37,7 @@ export type Complexity = "low" | "medium" | "high"
 
 /** Every control a generation model may take, by product name. */
 export type Params = {
-  aspectRatio: AspectRatio
+  aspectRatio: Shape
   resolution: Resolution
   quality: Quality
   complexity: Complexity
@@ -35,14 +46,22 @@ export type Params = {
   /** Seconds of video. */
   duration: number
   audio: boolean
+  /** Also returns the video's last frame as an image, to start the next clip from. */
+  lastFrame: boolean
   watermark: boolean
   /** Seedream's image group, where one prompt yields a related series. */
   sequential: boolean
+  /** An image with an alpha channel instead of a background. */
+  transparent: boolean
+  /** The most images a layer decomposition returns, the base image included. */
+  layers: number
+  /** Recognizes the text on text layers, with its position and style. */
+  textRecognition: boolean
 }
 
 export type ParamKey = keyof Params
 
-/** Controls that take a closed list of values. Only these can be a variant. */
+/** Controls that take a closed list of values. Only these can key a rate table. */
 export type ChoiceKey = { [K in ParamKey]: Params[K] extends string ? K : never }[ParamKey]
 
 export type Choice<T extends string> = { options: readonly T[]; default: T }
@@ -72,7 +91,11 @@ export const PARAMS: { [K in ParamKey]: { label: string; widget: Widget; unit?: 
   duration: { label: "Duration", widget: "slider", unit: "s" },
   count: { label: "Count", widget: "number" },
   sequential: { label: "Sequential images", widget: "toggle" },
+  layers: { label: "Layers", widget: "slider" },
+  textRecognition: { label: "Text recognition", widget: "toggle" },
+  transparent: { label: "Transparent", widget: "toggle" },
   audio: { label: "Audio", widget: "toggle" },
+  lastFrame: { label: "Last frame image", widget: "toggle" },
   watermark: { label: "Watermark", widget: "toggle" },
 }
 

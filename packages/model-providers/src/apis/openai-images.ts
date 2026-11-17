@@ -1,6 +1,7 @@
 import { z } from "zod"
+import { apiModelOf } from "../lib/model"
 
-import type { AspectRatio } from "../lib/params"
+import { type AspectRatio, ratioOf } from "../lib/params"
 import { dimensionsOf } from "../lib/gpt-image"
 import type { Output } from "../lib/result"
 import { type Adapter, json, unreadable } from "./api"
@@ -22,10 +23,11 @@ const mimeOf = (base64: string) =>
 /** GPT Image on an OpenAI-compatible endpoint. A prompt alone goes as JSON to `generations`. Any reference makes an `edits` upload. */
 export const openaiImages: Adapter = {
   submit(model, { prompt, references, params }) {
+    const ratio = ratioOf(params.aspectRatio)
     const options = {
-      model: model.id,
+      model: apiModelOf(model),
       prompt,
-      ...(params.aspectRatio && { size: sizeOf(params.aspectRatio) }),
+      ...(ratio && { size: sizeOf(ratio) }),
       ...(params.quality && { quality: params.quality }),
       ...(params.complexity && { complexity: params.complexity }),
       // No format control in the product, so PNG is fixed.

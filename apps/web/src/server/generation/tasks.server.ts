@@ -1,9 +1,13 @@
 import { generationTask } from "@db/schema"
 import {
+  costOf,
+  inputsOf,
   type MediaModel,
   modelOf,
   models,
   type Params,
+  type Quote,
+  quoteOf,
   type Reference,
   type ResolvedInput,
   resolveInput,
@@ -12,7 +16,6 @@ import { and, asc, db, eq, inArray } from "void/db"
 import { queues } from "void/queues"
 import { storage } from "void/storage"
 
-import { costOf, maxRunsOf, type Quote, quoteOf } from "./pricing"
 import { pollRun, submitRun } from "./provider.server"
 import { outputKey, type Run, runOf, runsOf } from "./runs.server"
 import { isOn, offOf } from "./switches.server"
@@ -34,7 +37,10 @@ const SYNC_LOST_MS = 10 * 60_000
 /** How long a confirming task keeps polling for a result the provider may still deliver. */
 const CONFIRM_MS = 24 * 3_600_000
 
-/** A media model by API id or by its display name. */
+/** The most runs one task takes. A model whose run already delivers several outputs takes one. */
+const maxRunsOf = (model: MediaModel) => ((model.outputsPerRun ?? 1) > 1 ? 1 : 4)
+
+/** A media model by catalog id or by its display name. */
 export const mediaModelOf = (key: string): MediaModel | undefined =>
   modelOf(key) ?? models.find((model) => model.name === key)
 
@@ -74,7 +80,7 @@ export async function checkTask(
     model,
     runs,
     resolved: resolved.value,
-    quote: quoteOf(model, resolved.value.params, runs),
+    quote: quoteOf(model, resolved.value.params, runs, inputsOf(resolved.value.references)),
   }
 }
 
@@ -220,6 +226,7 @@ async function next(task: TaskRow, model: MediaModel, runs: Run[], now: Date) {
 async function settle(task: TaskRow, model: MediaModel, runs: Run[], now: Date) {
   const delivered = runs.filter((run) => "stored" in run && run.stored.length)
   const tokens = delivered.reduce((sum, run) => sum + (("tokens" in run && run.tokens) || 0), 0)
+  const outputs = delivered.reduce((sum, run) => sum + ("stored" in run ? run.stored.length : 0), 0)
   const failures = runs.flatMap((run) =>
     "failed" in run ? [run.failed] : "pending" in run ? ["No result within 24 hours"] : []
   )
@@ -232,10 +239,12 @@ async function settle(task: TaskRow, model: MediaModel, runs: Run[], now: Date) 
       state,
       finishedAt: now,
       providerRef: JSON.stringify(runs),
-      costUsd: costOf(model, task.params as Partial<Params>, {
-        runs: delivered.length,
-        ...(tokens && { tokens }),
-      }),
+      costUsd: costOf(
+        model,
+        task.params as Partial<Params>,
+        { runs: delivered.length, outputs, ...(tokens && { tokens }) },
+        inputsOf((task.references ?? []) as Reference[])
+      ),
       tokens: tokens || null,
       lostRuns: billable,
       failure: failures.length

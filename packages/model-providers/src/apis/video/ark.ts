@@ -1,5 +1,6 @@
 import { z } from "zod"
 
+import { apiModelOf } from "../../lib/model"
 import type { Outcome } from "../../lib/result"
 import { type Adapter, json, unreadable } from "../api"
 import { contentOf } from "./content"
@@ -9,28 +10,33 @@ const created = z.object({ id: z.string() })
 const task = z.object({
   id: z.string(),
   status: z.enum(["queued", "running", "succeeded", "failed", "cancelled", "expired"]),
-  content: z.object({ video_url: z.string() }).optional(),
+  content: z.object({ video_url: z.string(), last_frame_url: z.string().optional() }).optional(),
   usage: z.object({ completion_tokens: z.number() }).optional(),
   error: z.object({ message: z.string() }).nullish(),
 })
 
-/** Seedance on Ark submits a task, then polls it. The prompt and references share one `content` list. Ark spells 4K `4k`. */
+/**
+ * Seedance on Ark submits a task, then polls it. The prompt and references share one `content` list.
+ * Ark spells 4K `4k`. An entry without a ratio control (edit) takes the input's shape
+ * (`adaptive`), and one without a duration control (edit) takes the input's length (`-1`).
+ */
 export const arkVideo: Adapter = {
   submit(model, { prompt, references, params }) {
     return {
       method: "POST",
       path: "/contents/generations/tasks",
       body: json({
-        model: model.id,
+        model: apiModelOf(model),
         content: [{ type: "text", text: prompt }, ...references.map(contentOf)],
-        ...(params.aspectRatio && {
-          ratio: params.aspectRatio,
-        }),
+        // Plain entries leave the task to Ark (`auto`), which reads it from the prompt and references.
+        ...(model.mode === "edit" && { omni_reference_task_type: "edit" }),
+        ratio: params.aspectRatio ?? "adaptive",
         ...(params.resolution && { resolution: params.resolution.toLowerCase() }),
-        ...(params.duration !== undefined && { duration: params.duration }),
+        duration: params.duration ?? -1,
         // No seed control in the product, so the request asks for a random one.
         seed: -1,
         ...(params.audio !== undefined && { generate_audio: params.audio }),
+        ...(params.lastFrame && { return_last_frame: true }),
         watermark: params.watermark ?? false,
       }),
     }
@@ -53,7 +59,12 @@ export const arkVideo: Adapter = {
           state: "done",
           result: {
             type: "video",
-            results: [{ asset: { kind: "url", url: content.video_url } }],
+            results: [
+              { asset: { kind: "url", url: content.video_url } },
+              ...(content.last_frame_url
+                ? [{ asset: { kind: "url" as const, url: content.last_frame_url } }]
+                : []),
+            ],
             ...(usage && { usage: { tokens: usage.completion_tokens } }),
           },
         }

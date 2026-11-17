@@ -3,7 +3,10 @@ import type { MediaModality } from "./model"
 /** Links from providers expire, or bytes come inline. The server copies either to storage, so no provider link is kept. */
 export type Asset = { kind: "url"; url: string } | { kind: "inline"; mime: string; base64: string }
 
-export type Output = { asset: Asset; width?: number; height?: number }
+/** Where a decomposed layer sits on the source image, and the text it carries when recognized. `box` is `[left, top, right, bottom]` in pixels. */
+export type Layer = { z: number; box: [number, number, number, number]; text?: string }
+
+export type Output = { asset: Asset; width?: number; height?: number; layer?: Layer }
 
 /** Every provider's answer in one shape. */
 export type GenerationResult = {

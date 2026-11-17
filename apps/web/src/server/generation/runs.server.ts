@@ -1,4 +1,4 @@
-import type { Output } from "@workspace/model-providers"
+import type { Layer, Output } from "@workspace/model-providers"
 import { storage } from "void/storage"
 
 import { factsOf, mimeOf } from "./facts"
@@ -12,6 +12,7 @@ type Stored = {
   width?: number
   height?: number
   durationMs?: number
+  layer?: Layer
 }
 
 /**
@@ -72,6 +73,7 @@ async function store(taskId: string, output: Output): Promise<Stored> {
     width: facts.width ?? output.width,
     height: facts.height ?? output.height,
     durationMs: facts.durationMs,
+    ...(output.layer && { layer: output.layer }),
   }
 }
 
