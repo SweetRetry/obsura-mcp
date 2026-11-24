@@ -253,8 +253,12 @@ export function mcpServer(caller: Caller) {
               }),
             },
           })
-        if (answer.action !== "accept")
+        if (answer.action === "decline")
           return refused("The user declined this generation. Do not retry it unless they ask.")
+        if (answer.action !== "accept")
+          return refused(
+            `The confirmation was not answered (${answer.action}): the client closed it without showing a choice. Ask the user before retrying.`
+          )
       }
       const submitted = await submitTask(caller, request)
       if ("refused" in submitted) return refused(submitted.refused)
