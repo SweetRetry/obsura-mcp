@@ -159,7 +159,7 @@ export async function startTask(taskId: string, now = new Date()): Promise<void>
     references: task.references as Reference[],
   }
   const sent = await Promise.all(Array.from({ length: task.runs }, () => submitRun(model, input)))
-  const runs = await Promise.all(sent.map((item) => runOf(task.id, item, false)))
+  const runs = await Promise.all(sent.map((item) => runOf(task.id, item)))
   return next({ ...task, state: "running" }, model, runs, new Date())
 }
 
@@ -196,7 +196,7 @@ export async function advanceTask(taskId: string, now = new Date()): Promise<voi
       if (!("pending" in run)) return run
       const sent = await pollRun(model, run.pending)
       // A poll that gets no clear answer asks again next time.
-      return sent.state === "unknown" ? run : runOf(task.id, sent, true)
+      return sent.state === "unknown" ? run : runOf(task.id, sent, run.pending)
     })
   )
   return next(task, model, polled, now)
@@ -208,7 +208,8 @@ async function next(task: TaskRow, model: MediaModel, runs: Run[], now: Date) {
   // A lost run with no provider task to ask cannot come back, so it fails, possibly billed.
   const final = runs.map((run): Run => ("lost" in run ? { failed: run.lost, billable: true } : run))
   if (final.every(resolved) || late) return settle(task, model, final, now)
-  const confirming = task.state === "confirming" || runs.some((run) => "lost" in run)
+  const confirming =
+    task.state === "confirming" || runs.some((run) => "lost" in run || "undelivered" in run)
   await db
     .update(generationTask)
     .set({
@@ -228,7 +229,11 @@ async function settle(task: TaskRow, model: MediaModel, runs: Run[], now: Date) 
   const tokens = delivered.reduce((sum, run) => sum + (("tokens" in run && run.tokens) || 0), 0)
   const outputs = delivered.reduce((sum, run) => sum + ("stored" in run ? run.stored.length : 0), 0)
   const failures = runs.flatMap((run) =>
-    "failed" in run ? [run.failed] : "pending" in run ? ["No result within 24 hours"] : []
+    "failed" in run
+      ? [run.failed]
+      : "pending" in run
+        ? [run.undelivered ?? "No result within 24 hours"]
+        : []
   )
   const billable = runs.filter((run) => "billable" in run || "pending" in run).length
   const state =

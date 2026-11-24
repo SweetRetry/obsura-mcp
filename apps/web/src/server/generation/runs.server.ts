@@ -19,9 +19,10 @@ type Stored = {
  * Where one run of a task stands, kept in `provider_ref`: the provider's task while it runs, the
  * files it delivered, or why it failed. `lost` is a run whose outcome is unknown (a timeout or a
  * 5xx), and `billable` marks a failure that began as lost, since the provider may have charged it.
+ * `undelivered` is why a finished provider task's files could not be copied yet.
  */
 export type Run =
-  | { pending: string }
+  | { pending: string; undelivered?: string }
   | { stored: Stored[]; tokens?: number }
   | { failed: string; billable?: true }
   | { lost: string }
@@ -41,6 +42,23 @@ export function outputIdOf(fileName: string) {
   return /^[0-9a-f]{32}$/.test(id) ? id : null
 }
 
+const FETCH_TRIES = 3
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** A provider's output link, asked again after a dropped connection, a 5xx or a 429. */
+async function download(url: string): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url).catch((error: unknown) => {
+      if (attempt === FETCH_TRIES) throw error
+      return null
+    })
+    if (response && (response.ok || (response.status < 500 && response.status !== 429)))
+      return response
+    if (attempt === FETCH_TRIES) return response!
+    await sleep(1000 * attempt)
+  }
+}
+
 const randomId = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
     b.toString(16).padStart(2, "0")
@@ -54,7 +72,7 @@ async function store(taskId: string, output: Output): Promise<Stored> {
     bytes = Uint8Array.from(atob(output.asset.base64), (char) => char.charCodeAt(0))
     mime = output.asset.mime
   } else {
-    const response = await fetch(output.asset.url)
+    const response = await download(output.asset.url)
     if (!response.ok) throw new Error(`Fetching an output answered ${response.status}`)
     bytes = new Uint8Array(await response.arrayBuffer())
     mime = response.headers.get("content-type")?.split(";")[0] ?? "application/octet-stream"
@@ -77,8 +95,11 @@ async function store(taskId: string, output: Output): Promise<Stored> {
   }
 }
 
-/** What a provider's answer for one run becomes. A done run is stored at once. */
-export async function runOf(taskId: string, sent: Sent, submitted: boolean): Promise<Run> {
+/**
+ * What a provider's answer for one run becomes. A done run is stored at once. A polled run whose
+ * files could not be copied stays pending, so the next poll fetches them again.
+ */
+export async function runOf(taskId: string, sent: Sent, providerTask?: string): Promise<Run> {
   if (sent.state === "pending") return { pending: sent.taskId }
   if (sent.state === "failed") return { failed: sent.reason }
   if (sent.state === "unknown") return { lost: sent.reason }
@@ -87,7 +108,8 @@ export async function runOf(taskId: string, sent: Sent, submitted: boolean): Pro
     const stored = await Promise.all(sent.result.results.map((output) => store(taskId, output)))
     return { stored, ...(sent.result.usage && { tokens: sent.result.usage.tokens }) }
   } catch (error) {
-    // Delivered but not copied: a poll can fetch it again; a synchronous answer is gone, and billed.
-    return submitted ? { lost: String(error) } : { failed: String(error), billable: true }
+    return providerTask
+      ? { pending: providerTask, undelivered: String(error) }
+      : { failed: String(error), billable: true }
   }
 }
