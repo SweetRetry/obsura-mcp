@@ -11,6 +11,10 @@ import {
   inputRequired,
   inputResponse,
   McpServer,
+  ProtocolError,
+  ProtocolErrorCode,
+  type CallToolResult,
+  type ServerContext,
 } from "@modelcontextprotocol/server"
 import env from "@env"
 import { z } from "zod"
@@ -24,6 +28,7 @@ import {
   submitTask,
   taskByClientKey,
   taskOf,
+  type TaskRow,
 } from "./generation/tasks.server"
 import { isOn, offOf } from "./generation/switches.server"
 import { costReport, listTasks, taskView, type TaskView } from "./generation/views.server"
@@ -33,19 +38,47 @@ export type Caller = { userId: string; clientId: string | null }
 
 const FINAL = new Set(["succeeded", "partial", "failed"])
 const POLL_MS = 4_000
-const MAX_WAIT_S = 120
+/** Keeps a waiting call inside the 60 s request timeout MCP clients default to. */
+const MAX_WAIT_S = 45
 const MAX_BATCH = 6
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Advances a task until it is final or `seconds` pass, so one tool call can return the result. */
-async function waitFor(taskId: string, seconds: number) {
+type Report = (message: string) => void
+
+/**
+ * Progress notifications for this call, when the client sent a progress token. A client may reset
+ * its timeout on each one, and the first one turns the response into a stream.
+ */
+function reporterOf(ctx: ServerContext): Report {
+  const progressToken = ctx.mcpReq._meta?.progressToken
+  if (progressToken === undefined) return () => {}
+  let progress = 0
+  return (message) => {
+    progress += 1
+    void ctx.mcpReq
+      .notify({ method: "notifications/progress", params: { progressToken, progress, message } })
+      .catch(() => {})
+  }
+}
+
+/**
+ * Advances a task until it is final, `seconds` pass or the client hangs up, so one tool call can
+ * return the result.
+ */
+async function waitFor(taskId: string, seconds: number, ctx: ServerContext, report: Report) {
   const deadline = Date.now() + Math.min(seconds, MAX_WAIT_S) * 1000
   let task = await taskOf(taskId)
-  while (task && !FINAL.has(task.state) && Date.now() + POLL_MS < deadline) {
+  while (
+    task &&
+    !FINAL.has(task.state) &&
+    !ctx.mcpReq.signal.aborted &&
+    Date.now() + POLL_MS < deadline
+  ) {
     await sleep(POLL_MS)
     await advanceTask(taskId)
     task = await taskOf(taskId)
+    if (task) report(`Task ${taskId} is ${task.state}.`)
   }
   return task
 }
@@ -59,7 +92,7 @@ function batchResult(results: (TaskView | { refused: string })[]) {
     : undefined
   return {
     content: [
-      { type: "text" as const, text: JSON.stringify({ tasks: results, note }, null, 2) },
+      { type: "text" as const, text: JSON.stringify({ tasks: results, note }) },
       ...views.flatMap((view) => outputLinks(view)),
     ],
     structuredContent: { tasks: results },
@@ -73,11 +106,40 @@ function taskResult(view: TaskView) {
     : `Still ${view.state}. Call get_task with task_id "${view.id}" (wait_seconds up to ${MAX_WAIT_S}) to collect it.`
   return {
     content: [
-      { type: "text" as const, text: JSON.stringify(note ? { ...view, note } : view, null, 2) },
+      { type: "text" as const, text: JSON.stringify(note ? { ...view, note } : view) },
       ...outputLinks(view),
     ],
     structuredContent: view,
   }
+}
+
+const TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+const TASK_POLL_MS = 5_000
+
+/**
+ * A batch as an MCP task (the tasks extension): working until every task in it is final, then
+ * completed with the result a blocking `generate` call returns.
+ */
+function mcpTask(batch: TaskRow[], origin: string) {
+  const times = batch.flatMap((task) =>
+    [task.createdAt, task.startedAt, task.finishedAt].flatMap((at) => (at ? [at.getTime()] : []))
+  )
+  const handle = {
+    taskId: batch.map((task) => task.id).join(","),
+    createdAt: new Date(Math.min(...batch.map((task) => task.createdAt.getTime()))).toISOString(),
+    lastUpdatedAt: new Date(Math.max(...times)).toISOString(),
+    ttlMs: null,
+    pollIntervalMs: TASK_POLL_MS,
+  }
+  const done = batch.filter((task) => FINAL.has(task.state)).length
+  if (done < batch.length)
+    return {
+      ...handle,
+      status: "working" as const,
+      statusMessage: `${done} of ${batch.length} tasks done.`,
+    }
+  const result = batchResult(batch.map((task) => taskView(task, origin)))
+  return { ...handle, status: "completed" as const, result: { resultType: "complete", ...result } }
 }
 
 const outputLinks = (view: TaskView) =>
@@ -161,7 +223,35 @@ const isoDate = z.iso.datetime({ offset: true }).or(z.iso.date())
 /** A fresh MCP server for one request, with the caller bound into every tool. */
 export function mcpServer(caller: Caller) {
   const origin = env.BETTER_AUTH_URL
-  const server = new McpServer({ name: "obscura", version: "0.1.0" })
+  const server = new McpServer(
+    { name: "obscura", version: "0.1.0" },
+    { capabilities: { extensions: { [TASKS_EXTENSION]: {} } } }
+  )
+  const takesTasks = () => !!server.server.getClientCapabilities()?.extensions?.[TASKS_EXTENSION]
+
+  /** The caller's tasks behind an MCP task id, or nothing when any of them is missing or not theirs. */
+  async function batchOf(mcpTaskId: string) {
+    const ids = mcpTaskId.split(",")
+    if (ids.length > MAX_BATCH) return undefined
+    const batch = await Promise.all(ids.map((id) => taskOf(id)))
+    return batch.every((task) => task?.userId === caller.userId) ? (batch as TaskRow[]) : undefined
+  }
+
+  const taskIdParams = { params: z.object({ taskId: z.string() }) }
+  server.server.setRequestHandler("tasks/get", taskIdParams, async ({ taskId }) => {
+    const batch = await batchOf(taskId)
+    if (!batch) throw new ProtocolError(ProtocolErrorCode.InvalidParams, "No such task.")
+    await Promise.all(
+      batch.filter((task) => !FINAL.has(task.state)).map((task) => advanceTask(task.id))
+    )
+    return mcpTask((await batchOf(taskId)) ?? batch, origin)
+  })
+  server.server.setRequestHandler("tasks/cancel", taskIdParams, async () => {
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidRequest,
+      "A generation can't be cancelled: its provider is already running and billing it."
+    )
+  })
 
   server.registerTool(
     "list_models",
@@ -191,7 +281,7 @@ export function mcpServer(caller: Caller) {
           guide: model.guide && guideUri(model),
           price: model.price && priceView(model.price),
         }))
-      return { content: [{ type: "text", text: JSON.stringify(list, null, 2) }] }
+      return { content: [{ type: "text", text: JSON.stringify(list) }] }
     }
   )
 
@@ -262,10 +352,9 @@ export function mcpServer(caller: Caller) {
         wait_seconds: z
           .number()
           .min(0)
-          .max(MAX_WAIT_S)
           .optional()
           .describe(
-            "How long to wait for the results. Default 60 when every task is image or audio, 0 when any is video."
+            `How long to wait for the results, at most ${MAX_WAIT_S}. Default ${MAX_WAIT_S} when every task is image or audio, 0 when any is video.`
           ),
       }),
     },
@@ -316,12 +405,20 @@ export function mcpServer(caller: Caller) {
       }
 
       const submitted = await Promise.all(requests.map((request) => submitTask(caller, request)))
+      const accepted = submitted.flatMap((result) => ("ok" in result ? [result.ok] : []))
+      if (
+        takesTasks() &&
+        accepted.length === submitted.length &&
+        accepted.some((task) => !FINAL.has(task.state))
+      )
+        return { resultType: "task", ...mcpTask(accepted, origin) } as unknown as CallToolResult
       const anyVideo = submitted.some((result) => "ok" in result && result.ok.modality === "video")
-      const wait = input.wait_seconds ?? (anyVideo ? 0 : 60)
+      const wait = input.wait_seconds ?? (anyVideo ? 0 : MAX_WAIT_S)
+      const report = reporterOf(ctx)
       const results = await Promise.all(
         submitted.map(async (result, i) => {
           if ("refused" in result) return { refused: `Task ${i + 1}: ${result.refused}` }
-          const task = (await waitFor(result.ok.id, wait)) ?? result.ok
+          const task = (await waitFor(result.ok.id, wait, ctx, report)) ?? result.ok
           return taskView(task, origin)
         })
       )
@@ -337,14 +434,18 @@ export function mcpServer(caller: Caller) {
         "A generation task's state, outputs and cost. Polls the provider; wait_seconds blocks until it finishes or the time passes.",
       inputSchema: z.object({
         task_id: z.string(),
-        wait_seconds: z.number().min(0).max(MAX_WAIT_S).default(0),
+        wait_seconds: z
+          .number()
+          .min(0)
+          .default(0)
+          .describe(`How long to wait for the task to finish, at most ${MAX_WAIT_S}.`),
       }),
     },
-    async ({ task_id, wait_seconds }) => {
+    async ({ task_id, wait_seconds }, ctx) => {
       const found = await taskOf(task_id)
       if (!found || found.userId !== caller.userId) return refused("No such task.")
       await advanceTask(task_id)
-      const task = (await waitFor(task_id, wait_seconds)) ?? found
+      const task = (await waitFor(task_id, wait_seconds, ctx, reporterOf(ctx))) ?? found
       return taskResult(taskView(task, origin))
     }
   )
@@ -429,7 +530,7 @@ export function mcpServer(caller: Caller) {
         since: since ? new Date(since) : undefined,
       })
       const views = rows.map((row) => taskView(row, origin))
-      return { content: [{ type: "text", text: JSON.stringify(views, null, 2) }] }
+      return { content: [{ type: "text", text: JSON.stringify(views) }] }
     }
   )
 
@@ -447,7 +548,7 @@ export function mcpServer(caller: Caller) {
         since: since ? new Date(since) : undefined,
         until: until ? new Date(until) : undefined,
       })
-      return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] }
+      return { content: [{ type: "text", text: JSON.stringify(report) }] }
     }
   )
 
