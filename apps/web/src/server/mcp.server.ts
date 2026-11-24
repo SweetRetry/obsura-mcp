@@ -93,7 +93,9 @@ function batchResult(results: (TaskView | { refused: string })[]) {
   return {
     content: [
       { type: "text" as const, text: JSON.stringify({ tasks: results, note }) },
-      ...views.flatMap((view) => outputLinks(view)),
+      ...results.flatMap((result, i) =>
+        "id" in result ? outputLinks(result, results.length > 1 ? `task-${i + 1}-` : "") : []
+      ),
     ],
     structuredContent: { tasks: results },
   }
@@ -142,11 +144,12 @@ function mcpTask(batch: TaskRow[], origin: string) {
   return { ...handle, status: "completed" as const, result: { resultType: "complete", ...result } }
 }
 
-const outputLinks = (view: TaskView) =>
+/** One link per output, named by modality and 1-based index (`prefix` tells a batch's tasks apart). */
+const outputLinks = (view: TaskView, prefix = "") =>
   view.outputs.map((output, index) => ({
     type: "resource_link" as const,
     uri: output.url,
-    name: `${view.modality}-${index + 1}`,
+    name: `${prefix}${view.modality}-${index + 1}`,
     mimeType: output.mime,
   }))
 
