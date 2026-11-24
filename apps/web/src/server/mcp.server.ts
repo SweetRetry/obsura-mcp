@@ -34,6 +34,7 @@ export type Caller = { userId: string; clientId: string | null }
 const FINAL = new Set(["succeeded", "partial", "failed"])
 const POLL_MS = 4_000
 const MAX_WAIT_S = 120
+const MAX_BATCH = 6
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -49,6 +50,22 @@ async function waitFor(taskId: string, seconds: number) {
   return task
 }
 
+/** A batch as tool output: the JSON views, plus a link per output so the client can open it. */
+function batchResult(results: (TaskView | { refused: string })[]) {
+  const views = results.filter((result): result is TaskView => "id" in result)
+  const open = views.filter((view) => !FINAL.has(view.state)).map((view) => view.id)
+  const note = open.length
+    ? `Still running: ${open.join(", ")}. Call get_task with each task_id (wait_seconds up to ${MAX_WAIT_S}) to collect it.`
+    : undefined
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify({ tasks: results, note }, null, 2) },
+      ...views.flatMap((view) => outputLinks(view)),
+    ],
+    structuredContent: { tasks: results },
+  }
+}
+
 /** A task as tool output: the JSON view, plus a link per output so the client can open it. */
 function taskResult(view: TaskView) {
   const note = FINAL.has(view.state)
@@ -57,16 +74,19 @@ function taskResult(view: TaskView) {
   return {
     content: [
       { type: "text" as const, text: JSON.stringify(note ? { ...view, note } : view, null, 2) },
-      ...view.outputs.map((output, index) => ({
-        type: "resource_link" as const,
-        uri: output.url,
-        name: `${view.modality}-${index + 1}`,
-        mimeType: output.mime,
-      })),
+      ...outputLinks(view),
     ],
     structuredContent: view,
   }
 }
+
+const outputLinks = (view: TaskView) =>
+  view.outputs.map((output, index) => ({
+    type: "resource_link" as const,
+    uri: output.url,
+    name: `${view.modality}-${index + 1}`,
+    mimeType: output.mime,
+  }))
 
 const refused = (message: string) => ({
   content: [{ type: "text" as const, text: message }],
@@ -83,11 +103,23 @@ function canConfirm(capabilities: ClientCapabilities | undefined) {
   return !!elicitation && (elicitation.form !== undefined || Object.keys(elicitation).length === 0)
 }
 
-/** What the user is asked before a task is recorded: the model, the runs and the quote. */
-function confirmation({ model, runs, quote }: { model: MediaModel; runs: number; quote: Quote }) {
-  const price =
-    quote.usd === null ? "at a price the catalog cannot tell" : `for $${+quote.usd.toFixed(4)}`
-  return `Generate ${model.modality} with ${model.name}, ${runs} ${runs === 1 ? "run" : "runs"} ${price} (list price)?`
+type Checked = { model: MediaModel; runs: number; quote: Quote }
+
+/** What the user is asked before a batch is recorded: per task the model, the runs and the quote, then the total. */
+function confirmation(batch: Checked[]) {
+  const usd = (quote: Quote) => (quote.usd === null ? "price unknown" : `$${+quote.usd.toFixed(4)}`)
+  const line = ({ model, runs, quote }: Checked) =>
+    `${model.name} (${model.modality}), ${runs} ${runs === 1 ? "run" : "runs"}, ${usd(quote)}`
+  if (batch.length === 1) return `Generate ${line(batch[0]!)} at list price?`
+  const known = batch.every(({ quote }) => quote.usd !== null)
+  const total = batch.reduce((sum, { quote }) => sum + (quote.usd ?? 0), 0)
+  return [
+    `Generate ${batch.length} tasks at list price?`,
+    ...batch.map((task, i) => `${i + 1}. ${line(task)}`),
+    known
+      ? `Total $${+total.toFixed(4)}`
+      : `Total at least $${+total.toFixed(4)} (some prices unknown)`,
+  ].join("\n")
 }
 
 const params = z
@@ -200,71 +232,100 @@ export function mcpServer(caller: Caller) {
     {
       title: "Generate media",
       description: [
-        "Generate images, video or audio with one model. Images usually finish within the call;",
-        "video returns a task to collect with get_task. Each run is billed by the provider, so",
-        "prefer runs=1 unless asked for variations. A client that can ask its user is sent the",
-        "quote to confirm first. Pass client_key to make a retry idempotent.",
-        "Returns the task with its quote and, once done, public output URLs.",
+        `Generate images, video or audio: 1 to ${MAX_BATCH} tasks in one call, each with its own model,`,
+        "prompt, params and references. Send tasks the user asked for together: a client that can ask",
+        "its user is sent one confirmation with every task's quote, and if any task is invalid nothing",
+        "is recorded. Each run is billed by the provider, so prefer runs=1 unless asked for variations.",
+        "Images usually finish within the call; video returns tasks to collect with get_task.",
+        "Pass a client_key per task to make a retry idempotent.",
+        "Returns the tasks in order with their quotes and, once done, public output URLs.",
       ].join(" "),
       inputSchema: z.object({
-        model: z.string().describe("A model id or name from list_models."),
-        prompt: z
-          .string()
-          .default("")
-          .describe(
-            "Required, except by a model whose mode runs without one (layer decomposition)."
-          ),
-        params: params.optional(),
-        references: z.array(reference).max(50).optional(),
-        runs: z.number().int().min(1).max(4).default(1),
-        client_key: z.string().max(200).optional(),
+        tasks: z
+          .array(
+            z.object({
+              model: z.string().describe("A model id or name from list_models."),
+              prompt: z
+                .string()
+                .default("")
+                .describe(
+                  "Required, except by a model whose mode runs without one (layer decomposition)."
+                ),
+              params: params.optional(),
+              references: z.array(reference).max(50).optional(),
+              runs: z.number().int().min(1).max(4).default(1),
+              client_key: z.string().max(200).optional(),
+            })
+          )
+          .min(1)
+          .max(MAX_BATCH),
         wait_seconds: z
           .number()
           .min(0)
           .max(MAX_WAIT_S)
           .optional()
           .describe(
-            "How long to wait for the result. Default 60 for image and audio, 0 for video."
+            "How long to wait for the results. Default 60 when every task is image or audio, 0 when any is video."
           ),
       }),
     },
     async (input, ctx) => {
-      const request = {
-        model: input.model,
-        prompt: input.prompt,
-        params: input.params as never,
-        references: input.references,
-        runs: input.runs,
-        clientKey: input.client_key,
-      }
-      // A retry of a task that already exists spends nothing, so it needs no second confirmation.
-      const retried =
-        input.client_key !== undefined && (await taskByClientKey(caller.userId, input.client_key))
-      if (!retried && canConfirm(server.server.getClientCapabilities())) {
-        const checked = await checkTask(request)
-        if ("refused" in checked) return refused(checked.refused)
+      const requests = input.tasks.map((task) => ({
+        model: task.model,
+        prompt: task.prompt,
+        params: task.params as never,
+        references: task.references,
+        runs: task.runs,
+        clientKey: task.client_key,
+      }))
+      const keys = requests.flatMap((request) => request.clientKey ?? [])
+      if (new Set(keys).size !== keys.length)
+        return refused("Each task in a batch needs its own client_key.")
+
+      // A retry of a task that already exists spends nothing, so only new tasks are checked and confirmed.
+      const retried = await Promise.all(
+        requests.map(
+          (request) =>
+            request.clientKey !== undefined && taskByClientKey(caller.userId, request.clientKey)
+        )
+      )
+      const fresh = requests.flatMap((request, i) => (retried[i] ? [] : [{ request, n: i + 1 }]))
+      const checked = await Promise.all(fresh.map(({ request }) => checkTask(request)))
+      const problems = checked.flatMap((result, i) =>
+        "refused" in result ? [`Task ${fresh[i]!.n}: ${result.refused}`] : []
+      )
+      if (problems.length) return refused(`Nothing was recorded. ${problems.join(" ")}`)
+
+      if (fresh.length && canConfirm(server.server.getClientCapabilities())) {
         const answer = inputResponse(ctx.mcpReq.inputResponses, "confirm")
         if (answer.kind !== "elicit")
           return inputRequired({
             inputRequests: {
               confirm: inputRequired.elicit({
-                message: confirmation(checked),
+                message: confirmation(checked as Checked[]),
                 requestedSchema: { type: "object", properties: {} },
               }),
             },
           })
         if (answer.action === "decline")
-          return refused("The user declined this generation. Do not retry it unless they ask.")
+          return refused("The user declined these generations. Do not retry them unless they ask.")
         if (answer.action !== "accept")
           return refused(
             `The confirmation was not answered (${answer.action}): the client closed it without showing a choice. Ask the user before retrying.`
           )
       }
-      const submitted = await submitTask(caller, request)
-      if ("refused" in submitted) return refused(submitted.refused)
-      const wait = input.wait_seconds ?? (submitted.ok.modality === "video" ? 0 : 60)
-      const task = (await waitFor(submitted.ok.id, wait)) ?? submitted.ok
-      return taskResult(taskView(task, origin))
+
+      const submitted = await Promise.all(requests.map((request) => submitTask(caller, request)))
+      const anyVideo = submitted.some((result) => "ok" in result && result.ok.modality === "video")
+      const wait = input.wait_seconds ?? (anyVideo ? 0 : 60)
+      const results = await Promise.all(
+        submitted.map(async (result, i) => {
+          if ("refused" in result) return { refused: `Task ${i + 1}: ${result.refused}` }
+          const task = (await waitFor(result.ok.id, wait)) ?? result.ok
+          return taskView(task, origin)
+        })
+      )
+      return batchResult(results)
     }
   )
 

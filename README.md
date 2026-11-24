@@ -4,7 +4,7 @@ Obscura is a remote MCP server on Cloudflare, served at `https://obscura.sweetre
 
 ## What it does
 
-- **MCP tools** at `/mcp` (Streamable HTTP): `list_models`, `get_model_guide` (the prompt-writing guide of a model whose syntax lives in the prompt, such as Midjourney; also an MCP resource at `obscura://guides/<model id>`), `generate` (a client that supports elicitation on protocol 2026-07-28 is sent the quote to confirm before anything is billed), `get_task`, `view_output` (scaled previews of image outputs, so Claude can look at what it made), `list_tasks` (searchable log), `cost_report`.
+- **MCP tools** at `/mcp` (Streamable HTTP): `list_models`, `get_model_guide` (the prompt-writing guide of a model whose syntax lives in the prompt, such as Midjourney; also an MCP resource at `obscura://guides/<model id>`), `generate` (a batch of 1 to 6 tasks per call; a client that supports elicitation on protocol 2026-07-28 is sent one confirmation with every task's quote before anything is billed), `get_task`, `view_output` (scaled previews of image outputs, so Claude can look at what it made), `list_tasks` (searchable log), `cost_report`.
 - **Standard MCP auth.** OAuth 2.1 with PKCE, dynamic client registration and RFC 9728 discovery, served by Better Auth's `mcp()` plugin. Access tokens are JWTs bound to `/mcp`.
 - **Allowlisted admins.** Sign-in is Google only, and only the addresses in the `ADMIN_EMAILS` secret get an account or a session. Each admin sees its own tasks and costs.
 - **Tasks.** Each request is a row in D1 that moves queued → running → succeeded | partial | failed (`confirming` while a lost run may still deliver). A queue sends each task to its provider, and a cron advances open tasks every minute.

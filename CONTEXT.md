@@ -1,6 +1,7 @@
 # Context
 
 - **Task.** One generation request: a prompt, params and references sent to one model `runs` times. Stored in `generation_task`. _Avoid_: job, generation (ambiguous).
+- **Batch.** The 1 to 6 tasks one `generate` call submits. They are checked together, so one invalid task records none, and confirmed together with one prompt; each stays its own task. Not stored.
 - **Run.** One provider call inside a task. A task is billed per run; a Midjourney run delivers four outputs.
 - **Output.** A file a run delivered, copied to R2 under `o/<id>` and served at `/f/<id>.<ext>`.
 - **Quote.** The list price of all of a task's runs, computed at submit (`quote_usd`).
