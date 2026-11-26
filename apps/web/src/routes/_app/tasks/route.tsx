@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router"
+import { createFileRoute, Link, Outlet } from "@tanstack/react-router"
 import { Button } from "@workspace/ui/components/button"
 import {
   Empty,
@@ -36,6 +36,7 @@ import {
 import { z } from "zod"
 
 import { PageHeader } from "@/components/app/page-header"
+import { taskLayoutId } from "@/components/app/task-layout"
 import { isOpen, type State, STATE_LABEL, STATES, TaskState } from "@/components/app/task-state"
 import { Thumb } from "@/components/app/thumb"
 import { ago, modelName, usd } from "@/lib/format"
@@ -53,7 +54,7 @@ const search = z.object({
 
 type Search = z.infer<typeof search>
 
-export const Route = createFileRoute("/_app/tasks/")({
+export const Route = createFileRoute("/_app/tasks")({
   validateSearch: search,
   loaderDeps: ({ search: { q, model, state, page } }) => ({ q, model, state, page: page ?? 1 }),
   loader: ({ deps }) => tasksPage({ data: deps }),
@@ -227,6 +228,7 @@ function Tasks() {
           </Pagination>
         )}
       </div>
+      <Outlet />
     </>
   )
 }
@@ -252,6 +254,7 @@ function TaskTable({ tasks }: { tasks: Task[] }) {
             <TableCell>
               <Thumb
                 id={task.id}
+                layoutId={taskLayoutId(task.id)}
                 prompt={task.prompt}
                 outputs={task.outputs}
                 pending={isOpen(task.state)}
@@ -262,6 +265,7 @@ function TaskTable({ tasks }: { tasks: Task[] }) {
               <Link
                 to="/tasks/$taskId"
                 params={{ taskId: task.id }}
+                search
                 className="line-clamp-2 whitespace-normal hover:underline"
               >
                 {task.prompt}
@@ -295,10 +299,12 @@ function TaskGrid({ tasks }: { tasks: Task[] }) {
           <Link
             to="/tasks/$taskId"
             params={{ taskId: task.id }}
+            search
             className="group flex flex-col gap-2"
           >
             <Thumb
               id={task.id}
+              layoutId={taskLayoutId(task.id)}
               prompt={task.prompt}
               outputs={task.outputs}
               pending={isOpen(task.state)}

@@ -35,7 +35,8 @@ function slideOf({ url, mime, alt }: PreviewMedia): Slide {
  * tab. The viewer opens on `media[index]` and steps through the rest with the arrows, the arrow
  * keys or a swipe. Images zoom with the wheel, a pinch, a double click or the toolbar; video and
  * audio start playing with the browser's own controls. Escape, the close button or a click on the
- * backdrop closes it.
+ * backdrop closes it. Inside a modal dialog the viewer renders in that dialog, whose top layer would
+ * otherwise cover it.
  */
 export function MediaPreview({
   media,
@@ -49,6 +50,7 @@ export function MediaPreview({
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
+  const [dialog, setDialog] = useState<Element | null>(null)
   const single = media.length < 2
   return (
     <>
@@ -56,7 +58,10 @@ export function MediaPreview({
         type="button"
         aria-label={label}
         className="block w-full cursor-zoom-in rounded-lg"
-        onClick={() => setOpen(true)}
+        onClick={(event) => {
+          setDialog(event.currentTarget.closest("dialog"))
+          setOpen(true)
+        }}
       >
         {children}
       </button>
@@ -65,6 +70,7 @@ export function MediaPreview({
         close={() => setOpen(false)}
         slides={media.map(slideOf)}
         index={index}
+        portal={{ root: dialog }}
         plugins={[Video, Zoom]}
         zoom={{ scrollToZoom: true, maxZoomPixelRatio: 3 }}
         carousel={{ finite: true }}

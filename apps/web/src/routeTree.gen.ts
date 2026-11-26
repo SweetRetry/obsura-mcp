@@ -18,8 +18,8 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppConnectRouteImport } from './routes/_app/connect'
 import { Route as AppCostsRouteImport } from './routes/_app/costs'
 import { Route as AppModelsRouteImport } from './routes/_app/models'
+import { Route as AppTasksRouteRouteImport } from './routes/_app/tasks/route'
 import { Route as FFileRouteImport } from './routes/f/$file'
-import { Route as AppTasksIndexRouteImport } from './routes/_app/tasks/index'
 import { Route as AppTasksTaskIdRouteImport } from './routes/_app/tasks/$taskId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
@@ -67,20 +67,20 @@ const AppModelsRoute = AppModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => AppRoute,
 } as any)
+const AppTasksRouteRoute = AppTasksRouteRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => AppRoute,
+} as any)
 const FFileRoute = FFileRouteImport.update({
   id: '/f/$file',
   path: '/f/$file',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppTasksIndexRoute = AppTasksIndexRouteImport.update({
-  id: '/tasks/',
-  path: '/tasks/',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppTasksTaskIdRoute = AppTasksTaskIdRouteImport.update({
-  id: '/tasks/$taskId',
-  path: '/tasks/$taskId',
-  getParentRoute: () => AppRoute,
+  id: '/$taskId',
+  path: '/$taskId',
+  getParentRoute: () => AppTasksRouteRoute,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
@@ -93,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/consent': typeof ConsentRoute
   '/mcp': typeof McpRoute
   '/sign-in': typeof SignInRoute
+  '/tasks': typeof AppTasksRouteRouteWithChildren
   '/.well-known/$': typeof DotwellKnownSplatRoute
   '/connect': typeof AppConnectRoute
   '/costs': typeof AppCostsRoute
@@ -100,12 +101,12 @@ export interface FileRoutesByFullPath {
   '/f/$file': typeof FFileRoute
   '/tasks/$taskId': typeof AppTasksTaskIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/tasks/': typeof AppTasksIndexRoute
 }
 export interface FileRoutesByTo {
   '/consent': typeof ConsentRoute
   '/mcp': typeof McpRoute
   '/sign-in': typeof SignInRoute
+  '/tasks': typeof AppTasksRouteRouteWithChildren
   '/.well-known/$': typeof DotwellKnownSplatRoute
   '/connect': typeof AppConnectRoute
   '/costs': typeof AppCostsRoute
@@ -114,7 +115,6 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/tasks/$taskId': typeof AppTasksTaskIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/tasks': typeof AppTasksIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -122,6 +122,7 @@ export interface FileRoutesById {
   '/consent': typeof ConsentRoute
   '/mcp': typeof McpRoute
   '/sign-in': typeof SignInRoute
+  '/_app/tasks': typeof AppTasksRouteRouteWithChildren
   '/.well-known/$': typeof DotwellKnownSplatRoute
   '/_app/connect': typeof AppConnectRoute
   '/_app/costs': typeof AppCostsRoute
@@ -130,7 +131,6 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/tasks/$taskId': typeof AppTasksTaskIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/_app/tasks/': typeof AppTasksIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -139,6 +139,7 @@ export interface FileRouteTypes {
     | '/consent'
     | '/mcp'
     | '/sign-in'
+    | '/tasks'
     | '/.well-known/$'
     | '/connect'
     | '/costs'
@@ -146,12 +147,12 @@ export interface FileRouteTypes {
     | '/f/$file'
     | '/tasks/$taskId'
     | '/api/auth/$'
-    | '/tasks/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/consent'
     | '/mcp'
     | '/sign-in'
+    | '/tasks'
     | '/.well-known/$'
     | '/connect'
     | '/costs'
@@ -160,13 +161,13 @@ export interface FileRouteTypes {
     | '/'
     | '/tasks/$taskId'
     | '/api/auth/$'
-    | '/tasks'
   id:
     | '__root__'
     | '/_app'
     | '/consent'
     | '/mcp'
     | '/sign-in'
+    | '/_app/tasks'
     | '/.well-known/$'
     | '/_app/connect'
     | '/_app/costs'
@@ -175,7 +176,6 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/tasks/$taskId'
     | '/api/auth/$'
-    | '/_app/tasks/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -253,6 +253,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppModelsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/tasks': {
+      id: '/_app/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof AppTasksRouteRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/f/$file': {
       id: '/f/$file'
       path: '/f/$file'
@@ -260,19 +267,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FFileRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app/tasks/': {
-      id: '/_app/tasks/'
-      path: '/tasks'
-      fullPath: '/tasks/'
-      preLoaderRoute: typeof AppTasksIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/tasks/$taskId': {
       id: '/_app/tasks/$taskId'
-      path: '/tasks/$taskId'
+      path: '/$taskId'
       fullPath: '/tasks/$taskId'
       preLoaderRoute: typeof AppTasksTaskIdRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppTasksRouteRoute
     }
     '/api/auth/$': {
       id: '/api/auth/$'
@@ -284,22 +284,32 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppTasksRouteRouteChildren {
+  AppTasksTaskIdRoute: typeof AppTasksTaskIdRoute
+}
+
+const AppTasksRouteRouteChildren: AppTasksRouteRouteChildren = {
+  AppTasksTaskIdRoute: AppTasksTaskIdRoute,
+}
+
+const AppTasksRouteRouteWithChildren = AppTasksRouteRoute._addFileChildren(
+  AppTasksRouteRouteChildren,
+)
+
 interface AppRouteChildren {
+  AppTasksRouteRoute: typeof AppTasksRouteRouteWithChildren
   AppConnectRoute: typeof AppConnectRoute
   AppCostsRoute: typeof AppCostsRoute
   AppModelsRoute: typeof AppModelsRoute
   AppIndexRoute: typeof AppIndexRoute
-  AppTasksTaskIdRoute: typeof AppTasksTaskIdRoute
-  AppTasksIndexRoute: typeof AppTasksIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppTasksRouteRoute: AppTasksRouteRouteWithChildren,
   AppConnectRoute: AppConnectRoute,
   AppCostsRoute: AppCostsRoute,
   AppModelsRoute: AppModelsRoute,
   AppIndexRoute: AppIndexRoute,
-  AppTasksTaskIdRoute: AppTasksTaskIdRoute,
-  AppTasksIndexRoute: AppTasksIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
