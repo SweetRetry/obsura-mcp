@@ -321,7 +321,7 @@ function ReferenceMedia({ url, mime }: { url: string; mime: string }) {
 /** A group of label and value rows; the first group needs no title, it follows the prompt. */
 function Facts({ title, children }: { title?: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex max-w-md flex-col gap-3">
       {title && <h2 className="text-sm font-medium">{title}</h2>}
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">{children}</dl>
     </section>
