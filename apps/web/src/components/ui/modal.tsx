@@ -6,15 +6,17 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react"
 import { EASE } from "@/lib/ease"
 
 const MORPH = { duration: 0.3, ease: EASE }
+/** `--radius-lg` in px: Motion keeps a corner round through a layout animation only when it is a number. */
+const RADIUS_LG = 10
 
 /**
  * A panel nearly the size of the window, over the view it was opened from: a header bar with the
  * title, `meta` and the close button, and below it the children, which fill the rest and scroll
  * their own regions. Given the `layoutId` of the element that opened it, the panel grows out of
  * that element and shrinks back into it. The native dialog supplies the focus trap and the inert
- * page behind. Escape is
- * handled here, since a browser closes a dialog outright on a second Escape and would skip the exit.
- * `onClosed` runs once the panel is gone.
+ * page behind. Escape is handled here, since a browser closes a dialog outright on a second Escape
+ * and would skip the exit. Closing the dialog after the exit hands focus back to what opened it;
+ * `onClosed` runs then.
  */
 export function Modal({
   layoutId,
@@ -48,7 +50,7 @@ export function Modal({
       }}
       onClose={onClosed}
     >
-      <AnimatePresence onExitComplete={onClosed}>
+      <AnimatePresence onExitComplete={() => dialog.current?.close()}>
         {open && (
           <motion.div
             key="backdrop"
@@ -65,15 +67,15 @@ export function Modal({
             key="panel"
             layoutId={layoutId}
             className="relative mx-auto h-full w-full max-w-7xl overflow-hidden border bg-background"
-            style={{ borderRadius: 10 }}
+            style={{ borderRadius: RADIUS_LG }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={MORPH}
           >
             <motion.div layout="position" className="flex h-full flex-col" transition={MORPH}>
-              <header className="flex h-14 shrink-0 items-center gap-3 border-b px-6">
-                <h2 id={titleId} className="text-sm font-medium">
+              <header className="flex h-14 shrink-0 items-center gap-3 bg-sidebar px-6">
+                <h2 id={titleId} className="text-base font-semibold">
                   {title}
                 </h2>
                 {meta}

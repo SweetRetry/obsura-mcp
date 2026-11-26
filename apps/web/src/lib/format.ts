@@ -30,9 +30,6 @@ export function ago(iso: string, now = Date.now()) {
   return "just now"
 }
 
-export const bytes = (n: number) =>
-  n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
-
 /** A date and time in `timeZone`, or the runtime's own zone when none is given. */
 export const dateTime = (iso: string, timeZone?: string) =>
   new Date(iso).toLocaleString(LOCALE, { timeZone, timeZoneName: timeZone ? "short" : undefined })

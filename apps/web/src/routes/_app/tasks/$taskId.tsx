@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router"
-import { Alert, AlertDescription, AlertTitle } from "@workspace/ui/components/alert"
+import { Alert, AlertDescription } from "@workspace/ui/components/alert"
 import { Button } from "@workspace/ui/components/button"
 import { Spinner } from "@workspace/ui/components/spinner"
 import { controlsOf, modelOf } from "@workspace/model-providers"
@@ -19,7 +19,7 @@ import { taskLayoutId } from "@/components/app/task-layout"
 import { isOpen, TaskState } from "@/components/app/task-state"
 import { GenerationOverlay } from "@/components/ui/generation-overlay"
 import { Modal } from "@/components/ui/modal"
-import { bytes, modelName, runs, usd } from "@/lib/format"
+import { modelName, runs, usd } from "@/lib/format"
 import { taskDetail } from "@/server/admin.functions"
 
 export const Route = createFileRoute("/_app/tasks/$taskId")({
@@ -74,98 +74,108 @@ function TaskDetail() {
   )
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
-      <div className="flex min-w-0 flex-1 flex-col gap-8 p-6 md:overflow-y-auto">
-        {task.failure && (
-          <Alert variant="destructive">
-            <CircleAlertIcon />
-            <AlertTitle>{task.state === "partial" ? "Some runs failed" : "It failed"}</AlertTitle>
-            <AlertDescription>{task.failure}</AlertDescription>
-          </Alert>
-        )}
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+      <div className="min-w-0 flex-1 p-6 lg:overflow-y-auto">
+        <div className="flex w-full max-w-3xl flex-col gap-8">
+          {task.failure && (
+            <Alert variant="destructive">
+              <CircleAlertIcon />
+              <AlertDescription>{task.failure}</AlertDescription>
+            </Alert>
+          )}
 
-        {tiles === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing was delivered.</p>
-        ) : (
-          <div
-            className={
-              tiles > 1 ? "grid gap-6 sm:grid-cols-2" : "mx-auto flex w-full max-w-3xl flex-col"
-            }
-          >
-            {/* Keyed by position, so a slot that was waiting keeps its overlay and reveals what arrives. */}
-            {Array.from({ length: tiles }, (_, index) => task.outputs[index]).map(
-              (output, index) => (
-                <figure key={index} className="flex flex-col gap-2">
-                  <div className={output ? undefined : PENDING_SHAPE[model?.modality ?? "image"]}>
-                    <GenerationOverlay
-                      id={`${task.id}-${index}`}
-                      pending={!output}
-                      mediaSrc={output?.url}
-                      prompt={task.prompt}
-                    >
-                      {!output ? null : output.mime.startsWith("video/") ? (
-                        <video src={output.url} controls className="w-full rounded-lg bg-muted">
-                          <track kind="captions" />
-                        </video>
-                      ) : output.mime.startsWith("audio/") ? (
-                        <audio src={output.url} controls className="w-full">
-                          <track kind="captions" />
-                        </audio>
-                      ) : (
-                        <MediaPreview
-                          media={gallery}
-                          index={gallery.findIndex((item) => item.url === output.url)}
-                        >
-                          <img src={output.url} alt={task.prompt} className="w-full rounded-lg" />
-                        </MediaPreview>
-                      )}
-                    </GenerationOverlay>
-                  </div>
-                  {output && (
-                    <figcaption className="flex items-center gap-1">
-                      <span className="text-xs text-muted-foreground tabular-nums">
-                        {output.width && output.height ? `${output.width}×${output.height}` : null}
-                        {output.durationMs ? ` ${(output.durationMs / 1000).toFixed(1)}s` : null}
-                      </span>
-                      <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                        {bytes(output.bytes)}
-                      </span>
-                      <CopyButton text={output.url} label="Copy link" />
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Download"
-                        render={<a href={output.url} download aria-label="Download" />}
-                        nativeButton={false}
+          {tiles === 0 ? (
+            !task.failure && <p className="text-sm text-muted-foreground">Nothing was delivered.</p>
+          ) : (
+            <div className={tiles > 1 ? "grid gap-6 sm:grid-cols-2" : "flex flex-col"}>
+              {/* Keyed by position, so a slot that was waiting keeps its overlay and reveals what arrives. */}
+              {Array.from({ length: tiles }, (_, index) => task.outputs[index]).map(
+                (output, index) => {
+                  const downloadLabel = tiles > 1 ? `Download output ${index + 1}` : "Download"
+                  return (
+                    <figure key={index} className="flex flex-col gap-2">
+                      <div
+                        className={output ? undefined : PENDING_SHAPE[model?.modality ?? "image"]}
                       >
-                        <DownloadIcon />
-                      </Button>
-                    </figcaption>
-                  )}
-                </figure>
-              )
-            )}
-          </div>
-        )}
-
-        {open && (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">
-              {waiting ? `${runs(waiting)} still with the provider.` : "Saving the files."}
-            </span>
-            <Button variant="secondary" size="sm" disabled={refreshing} onClick={refresh}>
-              {refreshing ? (
-                <Spinner data-icon="inline-start" />
-              ) : (
-                <RefreshCwIcon data-icon="inline-start" />
+                        <GenerationOverlay
+                          id={`${task.id}-${index}`}
+                          pending={!output}
+                          mediaSrc={output?.url}
+                          prompt={task.prompt}
+                        >
+                          {!output ? null : output.mime.startsWith("video/") ? (
+                            <video src={output.url} controls className="w-full rounded-lg bg-muted">
+                              <track kind="captions" />
+                            </video>
+                          ) : output.mime.startsWith("audio/") ? (
+                            <audio src={output.url} controls className="w-full">
+                              <track kind="captions" />
+                            </audio>
+                          ) : (
+                            <MediaPreview
+                              media={gallery}
+                              index={gallery.findIndex((item) => item.url === output.url)}
+                            >
+                              <img
+                                src={output.url}
+                                alt={task.prompt}
+                                className="w-full rounded-lg"
+                              />
+                            </MediaPreview>
+                          )}
+                        </GenerationOverlay>
+                      </div>
+                      {output && (
+                        <figcaption className="flex items-center gap-1">
+                          <span className="mr-auto text-xs text-muted-foreground tabular-nums">
+                            {output.width && output.height
+                              ? `${output.width}×${output.height}`
+                              : null}
+                            {output.durationMs
+                              ? ` ${(output.durationMs / 1000).toFixed(1)}s`
+                              : null}
+                          </span>
+                          <CopyButton
+                            text={output.url}
+                            label={tiles > 1 ? `Copy link to output ${index + 1}` : "Copy link"}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={downloadLabel}
+                            render={<a href={output.url} download aria-label={downloadLabel} />}
+                            nativeButton={false}
+                          >
+                            <DownloadIcon />
+                          </Button>
+                        </figcaption>
+                      )}
+                    </figure>
+                  )
+                }
               )}
-              Refresh
-            </Button>
-          </div>
-        )}
+            </div>
+          )}
+
+          {open && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                {waiting ? `${runs(waiting)} still with the provider.` : "Saving the files."}
+              </span>
+              <Button variant="secondary" size="sm" disabled={refreshing} onClick={refresh}>
+                {refreshing ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <RefreshCwIcon data-icon="inline-start" />
+                )}
+                Refresh
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
-      <aside className="flex shrink-0 flex-col gap-8 bg-surface-1 p-6 md:w-96 md:overflow-y-auto">
+      <aside className="flex shrink-0 flex-col gap-8 bg-sidebar p-6 lg:w-96 lg:overflow-y-auto">
         <section className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium">Prompt</h2>
@@ -189,7 +199,7 @@ function TaskDetail() {
                       to="/tasks/$taskId"
                       params={{ taskId: sources[reference.url]! }}
                       search
-                      className="text-xs hover:underline"
+                      className="text-xs text-primary hover:underline"
                     >
                       From a generation
                     </Link>
@@ -200,12 +210,8 @@ function TaskDetail() {
           </section>
         )}
 
-        <Facts title="Details">
-          <Row label="Model">
-            <Link to="/tasks" search={{ model: task.model }} className="hover:underline">
-              {modelName(task.model)}
-            </Link>
-          </Row>
+        <Facts>
+          <Row label="Model">{modelName(task.model)}</Row>
           {task.runs > 1 && <Row label="Runs">{task.runs}</Row>}
           <Row label="Client">{clientName ?? "—"}</Row>
           <Row label="Created">
@@ -312,11 +318,11 @@ function ReferenceMedia({ url, mime }: { url: string; mime: string }) {
   )
 }
 
-/** A titled group of label and value rows. */
-function Facts({ title, children }: { title: string; children: ReactNode }) {
+/** A group of label and value rows; the first group needs no title, it follows the prompt. */
+function Facts({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium">{title}</h2>
+      {title && <h2 className="text-sm font-medium">{title}</h2>}
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">{children}</dl>
     </section>
   )
@@ -325,7 +331,7 @@ function Facts({ title, children }: { title: string; children: ReactNode }) {
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
-      <dt className="text-muted-foreground">{label}</dt>
+      <dt>{label}</dt>
       <dd className="min-w-0 truncate text-right tabular-nums">{children}</dd>
     </>
   )
