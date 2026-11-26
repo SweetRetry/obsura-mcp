@@ -12,6 +12,10 @@ export const STATES = [
 ] as const satisfies typeof TASK_STATES
 export type State = (typeof STATES)[number]
 
+/** Still on its way: waiting its turn, with the provider, or held for the user's confirmation. */
+export const isOpen = (state: string) =>
+  state === "queued" || state === "running" || state === "confirming"
+
 /** One name per state, used by the filter and every row alike. */
 export const STATE_LABEL: Record<State, string> = {
   queued: "Queued",

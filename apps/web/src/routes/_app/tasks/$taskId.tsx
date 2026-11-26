@@ -1,6 +1,7 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router"
 import { Alert, AlertDescription, AlertTitle } from "@workspace/ui/components/alert"
 import { Button } from "@workspace/ui/components/button"
+import { Spinner } from "@workspace/ui/components/spinner"
 import { controlsOf, modelOf } from "@workspace/model-providers"
 import {
   CircleAlertIcon,
@@ -15,7 +16,8 @@ import { CopyButton } from "@/components/app/copy-button"
 import { MediaPreview } from "@/components/app/media-preview"
 import { LocalTime } from "@/components/app/local-time"
 import { PageHeader } from "@/components/app/page-header"
-import { TaskState } from "@/components/app/task-state"
+import { isOpen, TaskState } from "@/components/app/task-state"
+import { GenerationOverlay } from "@/components/ui/generation-overlay"
 import { bytes, modelName, runs, usd } from "@/lib/format"
 import { taskDetail } from "@/server/admin.functions"
 
@@ -29,13 +31,22 @@ export const Route = createFileRoute("/_app/tasks/$taskId")({
   component: TaskDetail,
 })
 
-const OPEN = new Set(["queued", "running", "confirming"])
+/** A waiting tile takes the shape its output will have. */
+const PENDING_SHAPE = { image: "aspect-square", video: "aspect-video", audio: "h-24" }
 
 function TaskDetail() {
   const { task, price, clientName, sources } = Route.useLoaderData()
   const router = useRouter()
-  const open = OPEN.has(task.state)
+  const [refreshing, setRefreshing] = useState(false)
+  const refresh = async () => {
+    setRefreshing(true)
+    await router.invalidate().finally(() => setRefreshing(false))
+  }
+  const open = isOpen(task.state)
   const model = modelOf(task.model)
+  // One tile per run still with the provider. A task not yet sent counts every run.
+  const waiting = !open ? 0 : task.pendingRuns || (task.outputs.length ? 0 : task.runs)
+  const tiles = task.outputs.length + waiting
   // The image outputs as one set, so the viewer steps between them.
   const gallery = task.outputs
     .filter((output) => !output.mime.startsWith("video/") && !output.mime.startsWith("audio/"))
@@ -48,14 +59,6 @@ function TaskDetail() {
     <>
       <PageHeader
         crumbs={[{ label: "Generations", to: "/tasks" }, { label: task.prompt.slice(0, 40) }]}
-        actions={
-          open && (
-            <Button variant="secondary" size="sm" onClick={() => router.invalidate()}>
-              <RefreshCwIcon data-icon="inline-start" />
-              Refresh
-            </Button>
-          )
-        }
       />
       <div className="grid grid-cols-12 gap-8 p-4 lg:p-6">
         <div className="col-span-12 flex flex-col gap-8 lg:col-span-8">
@@ -67,57 +70,81 @@ function TaskDetail() {
             </Alert>
           )}
 
-          {task.outputs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {open
-                ? `${runs(task.pendingRuns || task.runs)} still with the provider.`
-                : "Nothing was delivered."}
-            </p>
+          {tiles === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing was delivered.</p>
           ) : (
-            <div
-              className={
-                task.outputs.length > 1 ? "grid gap-6 sm:grid-cols-2" : "flex max-w-xl flex-col"
-              }
-            >
-              {task.outputs.map((output) => (
-                <figure key={output.url} className="flex flex-col gap-2">
-                  {output.mime.startsWith("video/") ? (
-                    <video src={output.url} controls className="w-full rounded-lg bg-muted">
-                      <track kind="captions" />
-                    </video>
-                  ) : output.mime.startsWith("audio/") ? (
-                    <audio src={output.url} controls className="w-full">
-                      <track kind="captions" />
-                    </audio>
-                  ) : (
-                    <MediaPreview
-                      media={gallery}
-                      index={gallery.findIndex((item) => item.url === output.url)}
-                    >
-                      <img src={output.url} alt={task.prompt} className="w-full rounded-lg" />
-                    </MediaPreview>
-                  )}
-                  <figcaption className="flex items-center gap-1">
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {output.width && output.height ? `${output.width}×${output.height}` : null}
-                      {output.durationMs ? ` ${(output.durationMs / 1000).toFixed(1)}s` : null}
-                    </span>
-                    <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                      {bytes(output.bytes)}
-                    </span>
-                    <CopyButton text={output.url} label="Copy link" />
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Download"
-                      render={<a href={output.url} download aria-label="Download" />}
-                      nativeButton={false}
-                    >
-                      <DownloadIcon />
-                    </Button>
-                  </figcaption>
-                </figure>
-              ))}
+            <div className={tiles > 1 ? "grid gap-6 sm:grid-cols-2" : "flex max-w-xl flex-col"}>
+              {/* Keyed by position, so a slot that was waiting keeps its overlay and reveals what arrives. */}
+              {Array.from({ length: tiles }, (_, index) => task.outputs[index]).map(
+                (output, index) => (
+                  <figure key={index} className="flex flex-col gap-2">
+                    <div className={output ? undefined : PENDING_SHAPE[model?.modality ?? "image"]}>
+                      <GenerationOverlay
+                        id={`${task.id}-${index}`}
+                        pending={!output}
+                        mediaSrc={output?.url}
+                        prompt={task.prompt}
+                      >
+                        {!output ? null : output.mime.startsWith("video/") ? (
+                          <video src={output.url} controls className="w-full rounded-lg bg-muted">
+                            <track kind="captions" />
+                          </video>
+                        ) : output.mime.startsWith("audio/") ? (
+                          <audio src={output.url} controls className="w-full">
+                            <track kind="captions" />
+                          </audio>
+                        ) : (
+                          <MediaPreview
+                            media={gallery}
+                            index={gallery.findIndex((item) => item.url === output.url)}
+                          >
+                            <img src={output.url} alt={task.prompt} className="w-full rounded-lg" />
+                          </MediaPreview>
+                        )}
+                      </GenerationOverlay>
+                    </div>
+                    {output && (
+                      <figcaption className="flex items-center gap-1">
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {output.width && output.height
+                            ? `${output.width}×${output.height}`
+                            : null}
+                          {output.durationMs ? ` ${(output.durationMs / 1000).toFixed(1)}s` : null}
+                        </span>
+                        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                          {bytes(output.bytes)}
+                        </span>
+                        <CopyButton text={output.url} label="Copy link" />
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Download"
+                          render={<a href={output.url} download aria-label="Download" />}
+                          nativeButton={false}
+                        >
+                          <DownloadIcon />
+                        </Button>
+                      </figcaption>
+                    )}
+                  </figure>
+                )
+              )}
+            </div>
+          )}
+
+          {open && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                {waiting ? `${runs(waiting)} still with the provider.` : "Saving the files."}
+              </span>
+              <Button variant="secondary" size="sm" disabled={refreshing} onClick={refresh}>
+                {refreshing ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <RefreshCwIcon data-icon="inline-start" />
+                )}
+                Refresh
+              </Button>
             </div>
           )}
 

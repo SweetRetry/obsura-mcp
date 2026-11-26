@@ -36,7 +36,7 @@ import {
 import { z } from "zod"
 
 import { PageHeader } from "@/components/app/page-header"
-import { type State, STATE_LABEL, STATES, TaskState } from "@/components/app/task-state"
+import { isOpen, type State, STATE_LABEL, STATES, TaskState } from "@/components/app/task-state"
 import { Thumb } from "@/components/app/thumb"
 import { ago, modelName, usd } from "@/lib/format"
 import { tasksPage } from "@/server/admin.functions"
@@ -250,7 +250,13 @@ function TaskTable({ tasks }: { tasks: Task[] }) {
         {tasks.map((task) => (
           <TableRow key={task.id}>
             <TableCell>
-              <Thumb prompt={task.prompt} outputs={task.outputs} className="size-10" />
+              <Thumb
+                id={task.id}
+                prompt={task.prompt}
+                outputs={task.outputs}
+                pending={isOpen(task.state)}
+                className="size-10"
+              />
             </TableCell>
             <TableCell className="max-w-md">
               <Link
@@ -292,8 +298,10 @@ function TaskGrid({ tasks }: { tasks: Task[] }) {
             className="group flex flex-col gap-2"
           >
             <Thumb
+              id={task.id}
               prompt={task.prompt}
               outputs={task.outputs}
+              pending={isOpen(task.state)}
               className="aspect-square w-full group-hover:opacity-90"
             />
             <p className="line-clamp-2 text-sm group-hover:underline">{task.prompt}</p>
